@@ -6,179 +6,189 @@ import plotly.express as px
 import plotly.graph_objects as go
 from bls import BLS
 import yfinance as yf
+import numpy as np
 
 # Set page config
-st.set_page_config(page_title="Global Economic Comparison Tool", layout="wide")
+st.set_page_config(page_title="Global Currency Analysis Tool", layout="wide")
 
 # Add title
-st.title("Global Economic Comparison Analysis")
+st.title("Global Currency Strength Analysis")
 
 # Initialize Forex converter and BLS
 c = fx.CurrencyRates()
 bls_client = BLS()
 
-# Define currency dictionary with full names
+# Define currency dictionary with full names and Yahoo Finance symbols
 CURRENCIES = {
-    'USD': 'United States Dollar',
-    'EUR': 'Euro',
-    'GBP': 'British Pound Sterling',
-    'JPY': 'Japanese Yen',
-    'AUD': 'Australian Dollar',
-    'CAD': 'Canadian Dollar',
-    'CHF': 'Swiss Franc',
-    'CNY': 'Chinese Yuan',
-    'INR': 'Indian Rupee',
-    'NZD': 'New Zealand Dollar',
-    'SGD': 'Singapore Dollar',
-    'HKD': 'Hong Kong Dollar',
-    'KRW': 'South Korean Won',
-    'MXN': 'Mexican Peso',
-    'BRL': 'Brazilian Real'
+    'USD': {'name': 'United States Dollar', 'symbol': None},
+    'EUR': {'name': 'Euro', 'symbol': 'EURUSD=X'},
+    'GBP': {'name': 'British Pound Sterling', 'symbol': 'GBPUSD=X'},
+    'JPY': {'name': 'Japanese Yen', 'symbol': 'JPYUSD=X'},
+    'AUD': {'name': 'Australian Dollar', 'symbol': 'AUDUSD=X'},
+    'CAD': {'name': 'Canadian Dollar', 'symbol': 'CADUSD=X'},
+    'CHF': {'name': 'Swiss Franc', 'symbol': 'CHFUSD=X'},
+    'CNY': {'name': 'Chinese Yuan', 'symbol': 'CNYUSD=X'},
 }
 
-def get_exchange_rates(base_currency='USD'):
-    """Get current exchange rates for selected currencies"""
-    rates = {}
-    
-    for currency in CURRENCIES.keys():
-        if currency != base_currency:
-            try:
-                rates[currency] = c.get_rate(base_currency, currency)
-            except:
-                rates[currency] = None
-            
-    return rates
-
-def get_inflation_data():
-    """Get inflation data from BLS"""
-    series_id = 'CUUR0000SA0'
-    end_year = datetime.now().year
-    start_year = end_year - 3
-    
+def get_historical_rates(currency_pair, period='1y'):
+    """Get historical exchange rate data using yfinance"""
     try:
-        data = bls_client.get_series(series_id, start_year, end_year)
-        df = pd.DataFrame(data).reset_index()
-        df.columns = ['date', 'value']
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date')
-        df['inflation'] = df['value'].pct_change(periods=12) * 100
-        return df
+        data = yf.download(currency_pair, period=period, interval='1d')
+        return data['Close']
     except Exception as e:
-        st.error(f"Error fetching BLS data: {str(e)}")
+        st.error(f"Error fetching historical data for {currency_pair}: {str(e)}")
         return None
 
-def main():
-    # Currency selection
-    st.sidebar.header("Currency Settings")
-    base_currency = st.sidebar.selectbox(
-        "Select Base Currency",
-        options=list(CURRENCIES.keys()),
-        format_func=lambda x: f"{x} - {CURRENCIES[x]}"
-    )
+def calculate_currency_strength(historical_rates):
+    """Calculate currency strength metrics"""
+    if historical_rates is None or len(historical_rates) < 2:
+        return None
     
-    target_currencies = st.sidebar.multiselect(
-        "Select Target Currencies for Comparison",
-        options=[curr for curr in CURRENCIES.keys() if curr != base_currency],
-        default=['EUR', 'GBP', 'JPY'],
-        format_func=lambda x: f"{x} - {CURRENCIES[x]}"
-    )
-
-    st.header(f"Exchange Rates (Base: {base_currency})")
-    
-    # Get and display exchange rates
-    rates = get_exchange_rates(base_currency)
-    filtered_rates = {k: v for k, v in rates.items() if k in target_currencies}
-    rates_df = pd.DataFrame.from_dict(filtered_rates.items())
-    rates_df.columns = ['Currency', 'Exchange Rate']
-    
-    # Add currency full names
-    rates_df['Currency Name'] = rates_df['Currency'].map(CURRENCIES)
-    
-    st.dataframe(rates_df)
-    
-    # Create exchange rate visualization
-    fig = px.bar(rates_df, x='Currency', y='Exchange Rate',
-                 title=f'Exchange Rates (Base: {base_currency})',
-                 hover_data=['Currency Name'])
-    st.plotly_chart(fig)
-    
-    # Inflation Analysis
-    st.header("Inflation Analysis")
-    
-    inflation_df = get_inflation_data()
-    if inflation_df is not None:
-        current_inflation = inflation_df['inflation'].dropna().iloc[-1]
-        st.metric("Current US Inflation Rate", f"{current_inflation:.2f}%")
-        
-        fig_inflation = px.line(inflation_df.dropna(),
-                              x='date', y='inflation',
-                              title='US Inflation Rate Over Time')
-        st.plotly_chart(fig_inflation)
-    
-    # Cost of Living Comparison
-    st.header("Cost of Living Comparison")
-    
-    # Allow user to input their own costs
-    st.subheader("Customize Monthly Expenses")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        housing = st.number_input("Housing (Rent/Mortgage)", value=2000)
-        food = st.number_input("Food/Groceries", value=500)
-        transport = st.number_input("Transportation", value=400)
-        healthcare = st.number_input("Healthcare", value=500)
-        utilities = st.number_input("Utilities", value=250)
-    
-    with col2:
-        internet = st.number_input("Internet/Phone", value=150)
-        insurance = st.number_input("Insurance", value=300)
-        entertainment = st.number_input("Entertainment", value=200)
-        misc = st.number_input("Miscellaneous", value=300)
-
-    basic_needs = {
-        'Housing': housing,
-        'Food': food,
-        'Transportation': transport,
-        'Healthcare': healthcare,
-        'Utilities': utilities,
-        'Internet/Phone': internet,
-        'Insurance': insurance,
-        'Entertainment': entertainment,
-        'Miscellaneous': misc
+    metrics = {
+        'Current Rate': historical_rates[-1],
+        'YTD Change %': ((historical_rates[-1] / historical_rates[0]) - 1) * 100,
+        'Volatility': historical_rates.std() / historical_rates.mean() * 100,
+        '52-week High': historical_rates.max(),
+        '52-week Low': historical_rates.min()
     }
+    return metrics
+
+def main():
+    st.sidebar.header("Analysis Settings")
     
-    # Display basic needs breakdown
-    basic_needs_df = pd.DataFrame.from_dict(basic_needs.items())
-    basic_needs_df.columns = ['Category', f'Cost ({base_currency})']
+    # Time period selection
+    period = st.sidebar.selectbox(
+        "Select Time Period",
+        ['1mo', '3mo', '6mo', '1y', '2y', '5y'],
+        index=3,
+        format_func=lambda x: {
+            '1mo': '1 Month',
+            '3mo': '3 Months',
+            '6mo': '6 Months',
+            '1y': '1 Year',
+            '2y': '2 Years',
+            '5y': '5 Years'
+        }[x]
+    )
+
+    # Currency strength analysis
+    st.header("Currency Strength Analysis")
     
-    # Pie chart for expense breakdown
-    fig_pie = px.pie(basic_needs_df, 
-                     values=f'Cost ({base_currency})', 
-                     names='Category',
-                     title='Monthly Expenses Breakdown')
-    st.plotly_chart(fig_pie)
+    # Create tabs for different analyses
+    tab1, tab2, tab3 = st.tabs(["Currency Trends", "Strength Metrics", "Volatility Analysis"])
     
-    total_base = sum(basic_needs.values())
-    st.metric(f"Total Monthly Cost ({base_currency})", 
-              f"{total_base:,.2f} {base_currency}")
+    with tab1:
+        st.subheader("Historical Exchange Rate Trends")
+        
+        # Plot historical rates for all major currencies
+        fig_trends = go.Figure()
+        
+        for curr, details in CURRENCIES.items():
+            if curr != 'USD' and details['symbol']:
+                rates = get_historical_rates(details['symbol'], period)
+                if rates is not None:
+                    fig_trends.add_trace(go.Scatter(
+                        x=rates.index,
+                        y=rates,
+                        name=f"{curr}/USD",
+                        mode='lines'
+                    ))
+        
+        fig_trends.update_layout(
+            title="Currency Exchange Rates vs USD",
+            xaxis_title="Date",
+            yaxis_title="Exchange Rate",
+            hovermode='x unified'
+        )
+        st.plotly_chart(fig_trends, use_container_width=True)
+
+    with tab2:
+        st.subheader("Currency Strength Metrics")
+        
+        # Calculate strength metrics for all currencies
+        strength_data = []
+        
+        for curr, details in CURRENCIES.items():
+            if curr != 'USD' and details['symbol']:
+                rates = get_historical_rates(details['symbol'], period)
+                if rates is not None:
+                    metrics = calculate_currency_strength(rates)
+                    if metrics:
+                        metrics['Currency'] = curr
+                        strength_data.append(metrics)
+        
+        if strength_data:
+            strength_df = pd.DataFrame(strength_data)
+            
+            # Create a heatmap of currency strength metrics
+            fig_heatmap = px.imshow(
+                strength_df.set_index('Currency').select_dtypes(include=[np.number]),
+                text=strength_df.set_index('Currency').select_dtypes(include=[np.number]).round(2),
+                aspect="auto",
+                title="Currency Strength Heatmap"
+            )
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+            
+            # Display metrics table
+            st.dataframe(strength_df.style.format({
+                'Current Rate': '{:.4f}',
+                'YTD Change %': '{:.2f}%',
+                'Volatility': '{:.2f}%',
+                '52-week High': '{:.4f}',
+                '52-week Low': '{:.4f}'
+            }))
+
+    with tab3:
+        st.subheader("Volatility Analysis")
+        
+        # Create volatility comparison chart
+        volatility_data = []
+        
+        for curr, details in CURRENCIES.items():
+            if curr != 'USD' and details['symbol']:
+                rates = get_historical_rates(details['symbol'], period)
+                if rates is not None:
+                    daily_returns = rates.pct_change().dropna()
+                    volatility = daily_returns.std() * np.sqrt(252) * 100  # Annualized volatility
+                    volatility_data.append({
+                        'Currency': curr,
+                        'Annualized Volatility %': volatility
+                    })
+        
+        if volatility_data:
+            vol_df = pd.DataFrame(volatility_data)
+            fig_vol = px.bar(
+                vol_df,
+                x='Currency',
+                y='Annualized Volatility %',
+                title="Currency Volatility Comparison",
+                color='Annualized Volatility %'
+            )
+            st.plotly_chart(fig_vol, use_container_width=True)
+
+    # Additional relative strength indicators
+    st.header("Relative Strength Indicators")
     
-    # Convert to selected currencies
-    st.subheader("Cost Comparison Across Selected Currencies")
-    
-    comparison_data = []
-    for currency in target_currencies:
-        if currency in rates:
-            rate = rates[currency]
-            converted = total_base * rate
-            comparison_data.append({
-                'Currency': f"{currency} ({CURRENCIES[currency]})",
-                'Monthly Cost': f"{converted:,.2f}",
-                'Annual Cost': f"{converted*12:,.2f}"
-            })
-    
-    if comparison_data:
-        comparison_df = pd.DataFrame(comparison_data)
-        st.dataframe(comparison_df)
+    # Moving average analysis
+    for curr, details in CURRENCIES.items():
+        if curr != 'USD' and details['symbol']:
+            rates = get_historical_rates(details['symbol'], period)
+            if rates is not None:
+                ma_20 = rates.rolling(window=20).mean()
+                ma_50 = rates.rolling(window=50).mean()
+                
+                fig_ma = go.Figure()
+                fig_ma.add_trace(go.Scatter(x=rates.index, y=rates, name=f"{curr}/USD", mode='lines'))
+                fig_ma.add_trace(go.Scatter(x=ma_20.index, y=ma_20, name='20-day MA', line=dict(dash='dash')))
+                fig_ma.add_trace(go.Scatter(x=ma_50.index, y=ma_50, name='50-day MA', line=dict(dash='dot')))
+                
+                fig_ma.update_layout(
+                    title=f"{curr}/USD Moving Average Analysis",
+                    xaxis_title="Date",
+                    yaxis_title="Exchange Rate",
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig_ma, use_container_width=True)
 
 if __name__ == "__main__":
     main()
